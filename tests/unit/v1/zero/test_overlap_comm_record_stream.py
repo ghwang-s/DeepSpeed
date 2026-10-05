@@ -288,6 +288,25 @@ def test_setup_buckets_resets_completion_for_new_physical_buffers(monkeypatch):
     assert bucket.reduction_complete_events == [None, None]
 
 
+def test_release_ipg_buffers_clears_completion_and_offload_reuse_events():
+    optimizer = DeepSpeedZeroOptimizer.__new__(DeepSpeedZeroOptimizer)
+    optimizer.contiguous_gradients = True
+    optimizer.ready_for_gradients = True
+    bucket = zero_stage12.IPGBucket()
+    bucket.set_buffers([torch.zeros(4), torch.zeros(4)])
+    bucket.reduction_complete_events[0] = object()
+    bucket.reuse_events[0] = object()
+    optimizer.ipg_buckets = {torch.float32: bucket}
+
+    optimizer._release_ipg_buffers()
+
+    # Neither event store may retain the lifetime of a released physical buffer.
+    assert bucket.buffer == []
+    assert bucket.reduction_complete_events == []
+    assert bucket.reuse_events == {}
+    assert not optimizer.ready_for_gradients
+
+
 def test_reduction_completion_is_isolated_per_dtype_bucket():
     optimizer = DeepSpeedZeroOptimizer.__new__(DeepSpeedZeroOptimizer)
     optimizer.overlap_comm = True
@@ -340,6 +359,7 @@ def test_ipg_buffer_completion_state_machine_across_dtypes_and_producers():
 def test_reduce_ipg_grads_records_completion_after_buffer_consumers(monkeypatch):
     operations = []
     optimizer = DeepSpeedZeroOptimizer.__new__(DeepSpeedZeroOptimizer)
+    optimizer._offload_gradient_safety_enabled = False
     optimizer.contiguous_gradients = True
     optimizer.overlap_comm = True
     optimizer.cpu_offload = False
@@ -368,6 +388,7 @@ def test_reduce_ipg_grads_records_completion_after_buffer_consumers(monkeypatch)
 def test_ipg_buffer_reuse_waits_once_before_gradient_copies_from_same_stream(monkeypatch):
     operations = []
     optimizer = DeepSpeedZeroOptimizer.__new__(DeepSpeedZeroOptimizer)
+    optimizer._offload_gradient_safety_enabled = False
     optimizer.reduce_bucket_size = 4
     optimizer.contiguous_gradients = True
     optimizer.overlap_comm = True
